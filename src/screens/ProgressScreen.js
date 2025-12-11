@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
-import { useAppContext } from './AppContext'; 
+import { useAppContext } from '../context/AppContext'; 
 
 
 
