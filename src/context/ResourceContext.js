@@ -1,10 +1,22 @@
 // src/context/ResourceContext.js
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { Platform } from 'react-native';
+// РАСКОММЕНТИРУЙТЕ ЭТИ ИМПОРТЫ:
 import AuthService from '../api/AuthService';
 import CacheManager from '../storage/CacheManager';
 import LocalStorage from '../storage/LocalStorage';
 import ApiClient from '../api/ApiClient';
 import { API_ENDPOINTS } from '../api/endpoints';
+
+// УДАЛИТЕ ЭТОТ БЛОК ЗАГЛУШЕК (строки 10-22):
+// // ВРЕМЕННЫЕ ЗАГЛУШКИ для разработки
+// const AuthService = {
+//   checkAuth: async () => ({ isAuthenticated: false, user: null, token: null }),
+//   login: async () => ({ success: false }),
+//   register: async () => ({ success: false }),
+//   logout: async () => {},
+// };
+// ...
 
 const ResourceContext = createContext();
 
@@ -19,26 +31,29 @@ export const useResourceContext = () => {
 export const ResourceProvider = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
-  const [resources, setResources] = useState({
-    user: null,
-    gameStats: null,
-    leaderboard: null,
-    settings: null,
-  });
+  const [user, setUser] = useState(null);
+  const [gameStats, setGameStats] = useState(null);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [settings, setSettings] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  // Проверка подключения к сети
+  // ИСПРАВЛЕНО: Убираем window и navigator для React Native
   useEffect(() => {
-    const checkConnection = () => {
-      setIsOnline(navigator.onLine);
-    };
+    setIsOnline(true);
+    
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const checkConnection = () => {
+        setIsOnline(navigator.onLine);
+      };
 
-    window.addEventListener('online', checkConnection);
-    window.addEventListener('offline', checkConnection);
+      window.addEventListener('online', checkConnection);
+      window.addEventListener('offline', checkConnection);
 
-    return () => {
-      window.removeEventListener('online', checkConnection);
-      window.removeEventListener('offline', checkConnection);
-    };
+      return () => {
+        window.removeEventListener('online', checkConnection);
+        window.removeEventListener('offline', checkConnection);
+      };
+    }
   }, []);
 
   // Инициализация ресурсов
@@ -50,29 +65,32 @@ export const ResourceProvider = ({ children }) => {
     try {
       setIsLoading(true);
 
+      // Проверяем аутентификацию
+      const authResult = await AuthService.checkAuth();
+      setIsAuthenticated(authResult.isAuthenticated);
+      
+      if (authResult.isAuthenticated && authResult.user) {
+        setUser(authResult.user);
+        if (authResult.token) {
+          ApiClient.setAuthToken(authResult.token);
+        }
+      }
+
       // Загружаем данные из локального хранилища
-      const [user, gameStats, settings] = await Promise.all([
-        LocalStorage.getItem('user_data'),
+      const [storedGameStats, storedSettings] = await Promise.all([
         LocalStorage.getGameStats(),
         LocalStorage.getSettings(),
       ]);
 
-      // Проверяем аутентификацию
-      const isAuthenticated = await AuthService.checkAuth();
+      setGameStats(storedGameStats);
+      setSettings(storedSettings);
 
       // Загружаем кэшированные данные
-      const leaderboard = await CacheManager.getLeaderboard();
-
-      setResources({
-        user: user ? JSON.parse(user) : null,
-        gameStats,
-        leaderboard,
-        settings,
-        isAuthenticated,
-      });
+      const cachedLeaderboard = await CacheManager.getLeaderboard();
+      setLeaderboard(cachedLeaderboard || []);
 
       // Если онлайн и есть аутентификация, синхронизируем с сервером
-      if (isOnline && isAuthenticated) {
+      if (isOnline && authResult.isAuthenticated) {
         await syncWithServer();
       }
     } catch (error) {
@@ -84,20 +102,18 @@ export const ResourceProvider = ({ children }) => {
 
   const syncWithServer = async () => {
     try {
-      const { gameStats } = resources;
-      
-      // Синхронизируем игровую статистику
       if (gameStats && gameStats.totalScore > 0) {
         await ApiClient.post(API_ENDPOINTS.GAME.SAVE_SCORE, gameStats);
         
-        // Обновляем кэш лидерборда
         await CacheManager.invalidateCache('LEADERBOARD');
         const updatedLeaderboard = await CacheManager.getLeaderboard(true);
-        
-        setResources(prev => ({
-          ...prev,
-          leaderboard: updatedLeaderboard,
-        }));
+        setLeaderboard(updatedLeaderboard || []);
+      }
+
+      const userResponse = await ApiClient.get(API_ENDPOINTS.USER.PROFILE);
+      if (userResponse.data) {
+        setUser(userResponse.data);
+        await LocalStorage.setItem('user_data', userResponse.data);
       }
     } catch (error) {
       console.error('Sync error:', error);
@@ -106,96 +122,158 @@ export const ResourceProvider = ({ children }) => {
 
   const updateGameStats = async (newStats) => {
     try {
-      // Обновляем локально
       const updatedStats = {
-        ...resources.gameStats,
+        ...gameStats,
         ...newStats,
       };
       
       await LocalStorage.saveGameStats(updatedStats);
-      
-      setResources(prev => ({
-        ...prev,
-        gameStats: updatedStats,
-      }));
+      setGameStats(updatedStats);
 
-      // Если онлайн, синхронизируем с сервером
-      if (isOnline) {
+      if (isOnline && isAuthenticated) {
         await ApiClient.post(API_ENDPOINTS.GAME.SAVE_SCORE, newStats);
+        await CacheManager.invalidateCache('LEADERBOARD');
       }
 
-      return { success: true };
+      return { success: true, data: updatedStats };
     } catch (error) {
       console.error('Update game stats error:', error);
-      return { success: false, error };
+      return { success: false, error: error.message };
     }
   };
 
   const updateSettings = async (newSettings) => {
     try {
       const updatedSettings = {
-        ...resources.settings,
+        ...settings,
         ...newSettings,
       };
       
       await LocalStorage.saveSettings(updatedSettings);
-      
-      setResources(prev => ({
-        ...prev,
-        settings: updatedSettings,
-      }));
+      setSettings(updatedSettings);
 
-      return { success: true };
+      if (isOnline && isAuthenticated) {
+        await ApiClient.put(API_ENDPOINTS.SETTINGS.UPDATE, updatedSettings);
+      }
+
+      return { success: true, data: updatedSettings };
     } catch (error) {
       console.error('Update settings error:', error);
-      return { success: false, error };
-    }
-  };
-
-  const login = async (email, password) => {
-    try {
-      const result = await AuthService.login(email, password);
-      
-      if (result.success) {
-        setResources(prev => ({
-          ...prev,
-          user: result.user,
-          isAuthenticated: true,
-        }));
-
-        // Загружаем данные пользователя с сервера
-        if (isOnline) {
-          await syncWithServer();
-        }
-      }
-      
-      return result;
-    } catch (error) {
       return { success: false, error: error.message };
     }
   };
 
+  // Методы авторизации
+  const login = async (email, password) => {
+    try {
+      setIsLoading(true);
+      const result = await AuthService.login(email, password);
+      
+      if (result.success) {
+        setUser(result.user);
+        setIsAuthenticated(true);
+        
+        await LocalStorage.setItem('user_data', result.user);
+        
+        if (result.token) {
+          ApiClient.setAuthToken(result.token);
+        }
+
+        if (isOnline) {
+          await syncWithServer();
+        }
+
+        return { success: true, user: result.user };
+      }
+      
+      return { success: false, error: result.error || 'Login failed' };
+    } catch (error) {
+      console.error('Login error:', error);
+      return { success: false, error: error.message };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const register = async (email, password, username) => {
+    try {
+      setIsLoading(true);
+      const result = await AuthService.register(email, password, username);
+      
+      if (result.success) {
+        setUser(result.user);
+        setIsAuthenticated(true);
+        
+        await LocalStorage.setItem('user_data', result.user);
+        
+        if (result.token) {
+          ApiClient.setAuthToken(result.token);
+        }
+
+        return { success: true, user: result.user };
+      }
+      
+      return { success: false, error: result.error || 'Registration failed' };
+    } catch (error) {
+      console.error('Register error:', error);
+      return { success: false, error: error.message };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const logout = async () => {
-    await AuthService.logout();
-    setResources({
-      user: null,
-      gameStats: null,
-      leaderboard: null,
-      settings: null,
-      isAuthenticated: false,
-    });
+    try {
+      setIsLoading(true);
+      await AuthService.logout();
+      
+      setUser(null);
+      setIsAuthenticated(false);
+      setGameStats(null);
+      setLeaderboard([]);
+      
+      ApiClient.setAuthToken(null);
+      await LocalStorage.removeItem('user_data');
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Logout error:', error);
+      return { success: false, error: error.message };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const checkAuth = async () => {
+    try {
+      const result = await AuthService.checkAuth();
+      
+      if (result.isAuthenticated && result.user) {
+        setUser(result.user);
+        setIsAuthenticated(true);
+        
+        if (result.token) {
+          ApiClient.setAuthToken(result.token);
+        }
+        
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('Check auth error:', error);
+      return false;
+    }
   };
 
   const refreshLeaderboard = async () => {
     try {
-      const leaderboard = await CacheManager.getLeaderboard(true);
-      setResources(prev => ({
-        ...prev,
-        leaderboard,
-      }));
-      return { success: true };
+      const updatedLeaderboard = await CacheManager.getLeaderboard(true);
+      setLeaderboard(updatedLeaderboard || []);
+      return { success: true, data: updatedLeaderboard };
     } catch (error) {
-      return { success: false, error };
+      console.error('Refresh leaderboard error:', error);
+      return { success: false, error: error.message };
     }
   };
 
@@ -203,34 +281,40 @@ export const ResourceProvider = ({ children }) => {
     try {
       await LocalStorage.clear();
       await CacheManager.invalidateAll();
-      setResources({
-        user: null,
-        gameStats: null,
-        leaderboard: null,
-        settings: null,
-        isAuthenticated: false,
-      });
+      setUser(null);
+      setGameStats(null);
+      setLeaderboard([]);
+      setSettings(null);
+      setIsAuthenticated(false);
+      ApiClient.setAuthToken(null);
       return { success: true };
     } catch (error) {
-      return { success: false, error };
+      console.error('Clear all data error:', error);
+      return { success: false, error: error.message };
     }
   };
 
+  const value = {
+    user,
+    gameStats,
+    leaderboard,
+    settings,
+    isLoading,
+    isOnline,
+    isAuthenticated,
+    updateGameStats,
+    updateSettings,
+    login,
+    register,
+    logout,
+    checkAuth,
+    refreshLeaderboard,
+    clearAllData,
+    syncWithServer,
+  };
+
   return (
-    <ResourceContext.Provider
-      value={{
-        ...resources,
-        isLoading,
-        isOnline,
-        updateGameStats,
-        updateSettings,
-        login,
-        logout,
-        refreshLeaderboard,
-        clearAllData,
-        syncWithServer,
-      }}
-    >
+    <ResourceContext.Provider value={value}>
       {children}
     </ResourceContext.Provider>
   );

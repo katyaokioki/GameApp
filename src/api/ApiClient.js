@@ -14,7 +14,7 @@ class ApiClient {
     // Интерцептор для добавления токена
     this.client.interceptors.request.use(
       (config) => {
-        const token = localStorage.getItem('auth_token');
+        const token = this.token; // Используем this.token вместо localStorage
         if (token) {
           config.headers.Authorization = `Bearer ${token}`;
         }
@@ -22,45 +22,53 @@ class ApiClient {
       },
       (error) => Promise.reject(error)
     );
+  }
 
-    // Интерцептор для обработки ошибок
-    this.client.interceptors.response.use(
-      (response) => response.data,
-      (error) => {
-        console.error('API Error:', error.response?.status, error.message);
-        return Promise.reject(error);
-      }
-    );
+  setAuthToken(token) {
+    this.token = token;
   }
 
   async get(endpoint, params = {}) {
-    return this.client.get(endpoint, { params });
+    try {
+      const response = await this.client.get(endpoint, { params });
+      return response.data;
+    } catch (error) {
+      console.error('GET Error:', error);
+      throw error;
+    }
   }
 
   async post(endpoint, data = {}) {
-    return this.client.post(endpoint, data);
+    try {
+      const response = await this.client.post(endpoint, data);
+      return response.data;
+    } catch (error) {
+      console.error('POST Error:', error);
+      throw error;
+    }
   }
 
   async put(endpoint, data = {}) {
-    return this.client.put(endpoint, data);
+    try {
+      const response = await this.client.put(endpoint, data);
+      return response.data;
+    } catch (error) {
+      console.error('PUT Error:', error);
+      throw error;
+    }
   }
 
   async delete(endpoint) {
-    return this.client.delete(endpoint);
-  }
-
-  // Метод для обработки загрузки файлов
-  async uploadFile(endpoint, file, onProgress = null) {
-    const formData = new FormData();
-    formData.append('file', file);
-
-    return this.client.post(endpoint, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-      onUploadProgress: onProgress,
-    });
+    try {
+      const response = await this.client.delete(endpoint);
+      return response.data;
+    } catch (error) {
+      console.error('DELETE Error:', error);
+      throw error;
+    }
   }
 }
 
-export default new ApiClient('https://api.your-game.com/v1');
+// СОЗДАЕМ ЭКЗЕМПЛЯР И ЭКСПОРТИРУЕМ ЕГО
+const apiClient = new ApiClient('https://api.your-game.com/v1');
+export default apiClient;

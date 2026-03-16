@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
+import GameTarget from '../components/GameTarget';
 import { 
   View, 
   Text, 
   StyleSheet,
   Alert,
   Image,
-  TouchableOpacity
+  TouchableOpacity,
+  Platform // Добавляем Platform
 } from 'react-native';
+import * as Haptics from 'expo-haptics'; // Добавляем Haptics
 import { useAppContext } from '../context/AppContext';
 import AnimatedButton from '../components/Button';
 import { 
@@ -87,7 +90,20 @@ const GameScreen = ({ navigation }) => {
     });
   };
 
+  /**
+   * ИЗМЕНЕНО: Добавлен Haptic Feedback для iOS
+   */
   const handleTargetPress = (targetId, points) => {
+    // Платформо-специфичная логика: тактильный отклик для iOS
+    if (Platform.OS === 'ios' && settings?.vibrationEnabled) {
+      try {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        console.log('🎯 Haptic feedback on iOS');
+      } catch (error) {
+        console.warn('Haptics failed:', error);
+      }
+    }
+    
     const scoreMultiplier = difficultyMultiplier?.scoreMultiplier || 1.0;
     const calculatedPoints = Math.round(points * scoreMultiplier);
     const newScore = score + calculatedPoints;

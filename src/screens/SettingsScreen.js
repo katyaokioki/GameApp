@@ -8,11 +8,16 @@ import {
   Alert,
   TouchableOpacity,
   Modal,
-  TextInput
+  TextInput,
+  Platform // Добавляем Platform
 } from 'react-native';
+import * as Notifications from 'expo-notifications'; // Добавляем уведомления
 import { useAppContext } from '../context/AppContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AnimatedButton from '../components/Button';
+
+// Ключ для хранения состояния напоминаний
+const REMINDER_KEY = '@gameapp_reminder_enabled';
 
 const SettingsScreen = () => {
   const { settings, updateSettings, resetProgress, userStats } = useAppContext();
@@ -20,11 +25,116 @@ const SettingsScreen = () => {
   const [resetModalVisible, setResetModalVisible] = useState(false);
   const [username, setUsername] = useState('Игрок');
   const [isUsernameModalVisible, setUsernameModalVisible] = useState(false);
+  // Добавляем состояние для напоминаний
+  const [isReminderEnabled, setIsReminderEnabled] = useState(false);
 
   // Синхронизация с глобальными настройками
   useEffect(() => {
     setLocalSettings(settings);
+    loadReminderState(); // Загружаем состояние напоминаний
   }, [settings]);
+
+  /**
+   * НОВОЕ: Загрузка состояния напоминаний
+   */
+  const loadReminderState = async () => {
+    try {
+      const savedReminder = await AsyncStorage.getItem(REMINDER_KEY);
+      if (savedReminder !== null) {
+        setIsReminderEnabled(JSON.parse(savedReminder));
+      }
+    } catch (error) {
+      console.error('Failed to load reminder state:', error);
+    }
+  };
+
+  /**
+   * НОВОЕ: Планирование ежедневного уведомления (только для Android)
+   */
+  const scheduleDailyReminder = async () => {
+    if (Platform.OS !== 'android') return false;
+
+    try {
+      // Запрашиваем разрешения для Android 13+
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      
+      if (finalStatus !== 'granted') {
+        Alert.alert(
+          '❌ Разрешение не предоставлено',
+          'Вы не будете получать напоминания. Включите уведомления в настройках телефона.'
+        );
+        return false;
+      }
+
+      // Отменяем все предыдущие уведомления
+      await Notifications.cancelAllScheduledNotificationsAsync();
+
+      // Планируем новое уведомление на 20:00 каждый день
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "🎮 Пора играть!",
+          body: 'Ваши цели ждут вас в GameApp. Заходите и повышайте свой уровень!',
+          data: { screen: 'Game' },
+          sound: true,
+          priority: Notifications.AndroidNotificationPriority.HIGH,
+        },
+        trigger: {
+          hour: 20,
+          minute: 0,
+          repeats: true,
+        },
+      });
+
+      Alert.alert('✅ Успешно', 'Ежедневное напоминание установлено на 20:00');
+      return true;
+    } catch (error) {
+      console.error('Failed to schedule notification:', error);
+      Alert.alert('❌ Ошибка', 'Не удалось установить напоминание');
+      return false;
+    }
+  };
+
+  /**
+   * НОВОЕ: Отмена всех уведомлений
+   */
+  const cancelAllReminders = async () => {
+    try {
+      await Notifications.cancelAllScheduledNotificationsAsync();
+      Alert.alert('ℹ️ Напоминание отключено');
+    } catch (error) {
+      console.error('Failed to cancel notifications:', error);
+    }
+  };
+
+  /**
+   * НОВОЕ: Отправка тестового уведомления
+   */
+  const sendTestNotification = async () => {
+    if (Platform.OS !== 'android') {
+      Alert.alert('ℹ️ Информация', 'Тестовые уведомления доступны только на Android');
+      return;
+    }
+    
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "🔔 Тестовое уведомление",
+          body: "Если вы это видите - уведомления работают!",
+          data: { test: true },
+        },
+        trigger: null, // Отправляем немедленно
+      });
+      Alert.alert('✅ Успешно', 'Тестовое уведомление отправлено');
+    } catch (error) {
+      Alert.alert('❌ Ошибка', 'Не удалось отправить тестовое уведомление');
+    }
+  };
 
   const handleSettingChange = (key, value) => {
     const updatedSettings = { ...localSettings, [key]: value };
@@ -34,17 +144,37 @@ const SettingsScreen = () => {
     // Дополнительные действия в зависимости от настройки
     switch(key) {
       case 'soundEnabled':
-        // Здесь можно вызвать функцию для управления звуком
         console.log('Звук:', value ? 'включен' : 'выключен');
         break;
       case 'notificationsEnabled':
-        // Запросить/отозвать разрешение на уведомления
         console.log('Уведомления:', value ? 'включены' : 'выключены');
         break;
       case 'difficulty':
-        // Сохранить сложность для использования в игре
         console.log('Сложность изменена на:', value);
         break;
+    }
+  };
+
+  /**
+   * НОВОЕ: Обработчик переключения напоминаний
+   */
+  const handleReminderToggle = async (value) => {
+    setIsReminderEnabled(value);
+    await AsyncStorage.setItem(REMINDER_KEY, JSON.stringify(value));
+
+    // Платформо-специфичная логика: только для Android
+    if (Platform.OS === 'android') {
+      if (value) {
+        await scheduleDailyReminder();
+      } else {
+        await cancelAllReminders();
+      }
+    } else {
+      // Для iOS показываем информационное сообщение
+      Alert.alert(
+        'ℹ️ Информация',
+        'Функция напоминаний доступна только на устройствах Android.'
+      );
     }
   };
 
@@ -143,6 +273,45 @@ const SettingsScreen = () => {
         </View>
       </View>
 
+      {/* НОВАЯ СЕКЦИЯ: Напоминания (только для Android) */}
+      {Platform.OS === 'android' && (
+        <View style={[styles.section, styles.androidSection]}>
+          <Text style={styles.sectionTitle}>📱 Напоминания (Android)</Text>
+          <Text style={styles.sectionDescription}>Ежедневные напоминания об игре</Text>
+          
+          <View style={styles.settingItem}>
+            <View style={styles.settingInfo}>
+              <Text style={styles.settingText}>Напоминание в 20:00</Text>
+              <Text style={styles.settingDescription}>Получать уведомление каждый день</Text>
+            </View>
+            <Switch
+              value={isReminderEnabled}
+              onValueChange={handleReminderToggle}
+              trackColor={{ false: '#ddd', true: '#81b0ff' }}
+              thumbColor={isReminderEnabled ? '#4A90E2' : '#f4f3f4'}
+            />
+          </View>
+
+          {/* Тестовая кнопка для проверки уведомлений */}
+          <TouchableOpacity 
+            style={styles.testButton}
+            onPress={sendTestNotification}
+          >
+            <Text style={styles.testButtonText}>🔔 Отправить тестовое уведомление</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Информация для iOS о недоступности функции */}
+      {Platform.OS === 'ios' && (
+        <View style={[styles.section, styles.iosSection]}>
+          <Text style={styles.sectionTitle}>📱 Напоминания</Text>
+          <Text style={styles.iosWarning}>
+            ⚠️ Функция ежедневных напоминаний доступна только на устройствах Android
+          </Text>
+        </View>
+      )}
+
       {/* Сложность игры */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>📊 Сложность игры</Text>
@@ -198,6 +367,7 @@ const SettingsScreen = () => {
         <Text style={styles.sectionTitle}>ℹ️ О приложении</Text>
         <View style={styles.aboutContainer}>
           <Text style={styles.aboutText}>Версия 1.0.0</Text>
+          <Text style={styles.aboutText}>Платформа: {Platform.OS === 'ios' ? 'iOS' : 'Android'}</Text>
           <Text style={styles.aboutText}>Разработчик: Ваша команда</Text>
           <Text style={styles.aboutText}>© 2024 Все права защищены</Text>
         </View>
@@ -293,6 +463,14 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     elevation: 3,
   },
+  androidSection: {
+    borderLeftWidth: 5,
+    borderLeftColor: '#4CAF50',
+  },
+  iosSection: {
+    opacity: 0.8,
+    backgroundColor: '#fafafa',
+  },
   sectionTitle: { 
     fontSize: 20, 
     fontFamily: 'RussoOne_400Regular',  
@@ -324,6 +502,25 @@ const styles = StyleSheet.create({
   settingDescription: {
     fontSize: 12,
     color: '#999',
+  },
+  testButton: {
+    backgroundColor: '#4A90E2',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  testButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  iosWarning: {
+    color: '#FF9800',
+    fontStyle: 'italic',
+    fontSize: 14,
+    textAlign: 'center',
+    padding: 10,
   },
   difficultyOption: {
     flexDirection: 'row',
