@@ -99,3 +99,7 @@ yarn install
 Запуск
 
 npx expo start --clear
+
+
+
+

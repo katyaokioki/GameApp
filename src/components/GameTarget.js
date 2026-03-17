@@ -31,10 +31,39 @@ const GameTarget = ({ id, value, onPress, isActive }) => {
     onPress(id);
   };
 
+  // Получаем стили с учетом платформы
+  const getTargetStyles = () => {
+    const baseStyles = {
+      width: 70,
+      height: 70,
+      borderRadius: 35,
+      justifyContent: 'center',
+      alignItems: 'center',
+      margin: 10,
+    };
+    
+    // Добавляем платформо-зависимые стили
+    if (Platform.OS === 'ios') {
+      return {
+        ...baseStyles,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
+      };
+    } else {
+      return {
+        ...baseStyles,
+        elevation: 5,
+      };
+    }
+  };
+
   return (
     <TouchableOpacity
+      testID="game-target"
       style={[
-        styles.target,
+        getTargetStyles(),
         isActive ? styles.activeTarget : styles.inactiveTarget,
         Platform.OS === 'ios' ? styles.iosTarget : styles.androidTarget
       ]}
@@ -52,27 +81,8 @@ const GameTarget = ({ id, value, onPress, isActive }) => {
   );
 };
 
+// Базовые стили без Platform.select
 const styles = StyleSheet.create({
-  target: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    justifyContent: 'center',
-    alignItems: 'center',
-    margin: 10,
-    // Тени работают по-разному на платформах
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 3.84,
-      },
-      android: {
-        elevation: 5,
-      },
-    }),
-  },
   activeTarget: {
     backgroundColor: '#4CAF50',
   },
